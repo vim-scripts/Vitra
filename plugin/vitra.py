@@ -26,8 +26,7 @@ def truncate_words(text, num_words=10):
 
 def get_time(value, format=False):
     if isinstance(value, xmlrpclib.DateTime):
-        dt = datetime.datetime.strptime(value.value,
-                                        "%Y%m%dT%H:%M:%S")
+        dt = datetime.datetime.strptime(value.value, "%Y%m%dT%H:%M:%S")
     else:
         dt = datetime.datetime.fromtimestamp(value)
     return dt.strftime("%a %d/%m/%Y %H:%M") if format else dt
@@ -36,8 +35,7 @@ def get_time(value, format=False):
 def save_buffer(buffer, file):
     file_name = os.path.basename(file)
     if os.path.exists(file_name):
-        vim.command('echoerr "Will not overwrite existing file {0}"'.format(
-                        file_name))
+        vim.command('echoerr "File \'{0}\' exists!"'.format(file_name))
     else:
         with open(file_name, 'wb') as fp:
             fp.write(buffer)
@@ -48,18 +46,22 @@ def map_commands(nmaps):
         vim.command('nnoremap <buffer> {0} {1}'.format(*m))
 
 
-class HTTPDigestTransport(xmlrpclib.SafeTransport):
+def print_error(e):
+    vim.command('echoerr "Error: {0}"'.format(e))
+
+
+class HTTPDigestTransport(xmlrpclib.Transport):
     def __init__(self, scheme, username, password, realm):
+        xmlrpclib.Transport.__init__(self)
         self.username = username
         self.password = password
         self.realm = realm
         self.scheme = scheme
-        self.verbose = False
-        xmlrpclib.SafeTransport.__init__(self)
 
     def request(self, host, handler, request_body, verbose):
         url = '{scheme}://{host}{handler}'.format(scheme=self.scheme,
                                                   host=host, handler=handler)
+        self.verbose = verbose
         request = urllib2.Request(url)
         request.add_data(request_body)
         request.add_header("User-Agent", self.user_agent)
@@ -124,7 +126,7 @@ class Window(object):
         text = text.encode('utf-8', 'ignore')
         self.prepare()
         vim.command("setlocal modifiable")
-        self.buffer[:] = text.split('\n')
+        self.buffer[:] = text.splitlines()
         vim.command('normal gg')
         self.on_write()
 
@@ -266,6 +268,7 @@ class PreviewWindow(NonEditableWindow):
         with codecs.open(file_name, 'w', 'utf-8') as fp:
             fp.write(html)
 
+        self.prepare()
         self.command('setlocal modifiable')
         self.command('norm ggdG')
         self.command('silent r!lynx -dump {0}'.format(file_name))
@@ -295,14 +298,14 @@ class WikiListWindow(NonEditableWindow):
 
         vim.command('sort')
         vim.command('silent norm ggOWikiStart')
-        NonEditableWindow.on_write(self)
+        super(WikiListWindow, self).on_write()
 
 
 class TicketListWindow(NonEditableWindow):
     def on_create(self):
         map_commands([
-            ('<cr>', ':python trac.ticket_view(listing=True)<cr>'),
-            ('<2-LeftMouse>', ':python trac.ticket_view(listing=True)<cr>'),
+            ('<cr>', '0:python trac.ticket_view("<c-r><c-w>")<cr>'),
+            ('<2-LeftMouse>', '0:python trac.ticket_view("<c-r><c-w>")<cr>'),
         ])
 
     def on_write(self):
@@ -312,7 +315,7 @@ class TicketListWindow(NonEditableWindow):
         except:
             vim.command('echo "install Align for the best view of summary"')
         vim.command('silent %s/^\s*|| / - /g')
-        NonEditableWindow.on_write(self)
+        super(TicketListWindow, self).on_write()
         vim.command('silent norm 2gg')
         vim.command('syn match Ignore /||/')
         vim.command('syn match Number /\<\d*\>/')
@@ -334,14 +337,42 @@ class TicketListWindow(NonEditableWindow):
 
 
 class TicketWindow(NonEditableWindow):
-    def on_create(self):
-        vim.command('setlocal syntax=tracwiki')
-        map_commands([('<tab>', '/^=.*=<cr>:nohl<cr>')])
-
     def on_write(self):
-        NonEditableWindow.on_write(self)
-        vim.command('syn match Keyword /^ \+[^:\*]*: .*$/ contains=Title')
-        vim.command('syn match Title /^ \+[^:\*]*:/ contained')
+        vim.command('setlocal syntax=tracwiki')
+        self.highlight()
+        map_commands([('<tab>', '/^=.*=<cr>:nohl<cr>')])
+        super(TicketWindow, self).on_write()
+
+    def highlight(self):
+        vim.command('syn match Keyword /^ \+\*[^:]*:.*$/ contains=Title')
+        vim.command('syn match Title /^ \+\*[^:]*:/ contained')
+        vim.command('syn match Underlined /\[\d*\]\w*/ contains=Ignore')
+        vim.command('syn match Ignore /\[\d*\]/ contained')
+        vim.command('syn match Special '
+                    '/\w\{3\} [0-9/]\{10\} [0-9:]\{5\} (.*)/ '
+                    'contains=Identifier')
+        vim.command('syn match Identifier /(.*)/ contained')
+
+    def load(self, wiki_text):
+        file_name = '/tmp/ticket_wiki_markup_text.html'
+        with codecs.open(file_name, 'w', 'utf-8') as fp:
+            fp.write(trac.server.wiki.wikiToHtml(wiki_text))
+
+        self.prepare()
+        self.command('setlocal modifiable')
+        self.buffer[:] = []
+        self.command('silent r!lynx -dump {0}'.format(file_name))
+        self.command('setlocal nomodifiable')
+        self.command('norm gg')
+        vim.command('setlocal syntax=text')
+        self.highlight()
+        map_commands([
+            ('<tab>',
+                '/^\w\{3\} [0-9/]\{10\} [0-9:]\{5\} (.*)$<cr>:nohl<cr>'),
+            ('<c-]>', '/\\d*\\]\\w*<cr>:nohl<cr>'),
+            ('<cr>', 'F[l/^ *<c-r><c-w>. http<cr>fh"py$:nohl<cr>'
+                    ':python webbrowser.open("<c-r>p")<cr><c-o>'),
+        ])
 
 
 class TicketCommentWindow(Window):
@@ -352,61 +383,53 @@ class TicketCommentWindow(Window):
 class SearchWindow(NonEditableWindow):
     def on_create(self):
         map_commands([
+            ('<tab>', '/^\w\+:>><cr>:nohl<cr>'),
             ('<c-]>', ':python trac.wiki_view("<c-r><c-w>")<cr>'),
             ('<cr>', ':python trac.open_line()<cr>'),
         ])
         vim.command('setlocal syntax=tracwiki')
 
     def on_write(self):
-        NonEditableWindow.on_write(self)
+        super(SearchWindow, self).on_write()
         vim.command('syn match Keyword /\w*:>> .*$/ contains=Title')
         vim.command('syn match Title /\w*:>>/ contained')
 
 
-class TimelineWindow(NonEditableWindow):
-    def on_create(self):
-        map_commands([
-            ('<c-]>', ':python trac.wiki_view("<c-r><c-w>")<cr>'),
-            ('<cr>', ':python trac.open_line()<cr>'),
-        ])
-        vim.command('setlocal syntax=tracwiki')
-
+class TimelineWindow(SearchWindow):
     def on_write(self):
-        NonEditableWindow.on_write(self)
-        vim.command('syn match Keyword /\w*:>> .*$/ contains=Title')
-        vim.command('syn match Title /\w*:>>/ contained')
+        super(TimelineWindow, self).on_write()
         vim.command('syn match Identifier /^[0-9\-]\{10\}\s.*$/ '
                     'contains=Statement')
-        vim.command('syn match Statement /\d\{2\}:\d\{2\}:\d\{2\}$/')
+        vim.command('syn match Statement /[0-9:]\{8\}$/ contained')
 
 
 class ServerWindow(NonEditableWindow):
     def on_create(self):
         map_commands([
-            ('<cr>', ':python trac.set_server("<c-r><c-w>")<cr>'
-                     ':echo "Trac server is set to <c-r><c-w>"<cr>')])
+            ('<cr>', '0:python trac.set_server("<c-r><c-w>")<cr>'
+                     ':python trac.server_view()<cr>')])
 
     def on_write(self):
-        NonEditableWindow.on_write(self)
+        super(ServerWindow, self).on_write()
         vim.command('syn match Keyword /^\w*:/')
+        vim.command('syn match Identifier /^\*\w*:/')
+        vim.command('syn match Title /^!\w*:/')
+        vim.command('syn match Special /^\*!\w*:/')
 
 
 class AttachmentWindow(NonEditableWindow):
     def on_create(self):
         map_commands([
-            ('<cr>', ':python trac.get_attachment(vim.current.line)')])
+            ('<cr>', ':python trac.get_attachment(vim.current.line)<cr>')])
 
 
 class ChangesetWindow(NonEditableWindow):
-    def on_write(self):
-        self.command('set ft=diff')
-        self.command('silent %s/\r//g')
-        self.command('norm gg')
-        NonEditableWindow.on_write(self)
-
     def load(self, changeset):
         self.command('setlocal modifiable')
         self.command('silent Nread {0}?format=diff'.format(changeset))
+        self.command('set ft=diff')
+        self.command('silent %s/\r//g')
+        self.command('norm gg')
         self.on_write()
 
 
@@ -419,25 +442,28 @@ class Wiki(object):
         self.current = {}
 
     def get_all(self):
-        self.pages = trac.server.wiki.getAllPages()
-        return self.pages
+        try:
+            self.pages = trac.server.wiki.getAllPages()
+            return self.pages
+        except Exception as e:
+            print_error(e)
+            return []
 
-    def get(self, name, revision=None):
+    def get(self, name):
         try:
             name = name.strip()
             self.attachments = []
             self.current = {'name': name}
-            if revision is not None:
-                text = trac.server.wiki.getPage(name, revision)
+            text = trac.server.wiki.getPage(name)
+            self.current = self.get_page_info(name)
+            self.attachments = self.list_attachments()
+        except xmlrpclib.Fault as e:
+            if e.faultCode == 404:
+                text = "Page doesn't exist. Describe {0} here.".format(name)
             else:
-                text = trac.server.wiki.getPage(name)
-                self.current = self.get_page_info(name)
-                self.attachments = self.list_attachments()
-        except:
-            if revision is None:
-                text = "Describe {0} here.".format(name)
-            else:
-                text = ''
+                text = "Error: {0}".format(e.faultString)
+        except Exception as e:
+                text = "Error: {0}".format(e)
         return text
 
     def get_html(self):
@@ -445,8 +471,8 @@ class Wiki(object):
             return ''
         try:
             return trac.server.wiki.getPageHTML(self.current.get('name'))
-        except:
-            return ''
+        except Exception as e:
+            return str(e)
 
     def save(self, comment):
         try:
@@ -477,20 +503,34 @@ class Wiki(object):
             return info
         except:
             vim.command('echoerr "Cannot get page info"')
-            return {}
+            return {'name': page}
 
     def add_attachment(self, file):
         file_name = os.path.basename(file)
         path = '{0}/{1}'.format(self.current.get('name'), file_name)
         attachment = xmlrpclib.Binary(open(file).read())
-        trac.server.wiki.putAttachment(path, attachment)
+        try:
+            trac.server.wiki.putAttachment(path, attachment)
+            return True
+        except Exception as e:
+            print_error(e)
+            return False
 
     def get_attachment(self, file):
-        buffer = trac.server.wiki.getAttachment(file)
-        save_buffer(buffer.data, file)
+        try:
+            buffer = trac.server.wiki.getAttachment(file)
+            save_buffer(buffer.data, file)
+            return True
+        except Exception as e:
+            print_error(e)
+            return False
 
     def list_attachments(self):
-        return trac.server.wiki.listAttachments(self.current.get('name'))
+        try:
+            return trac.server.wiki.listAttachments(self.current.get('name'))
+        except Exception as e:
+            print_error(e)
+            return []
 
     def get_options(self):
         if not self.pages:
@@ -517,14 +557,20 @@ class Ticket(object):
         }
         self.filters = {}
         self.page = 1
+        self.total_pages = 0
         self.attachments = []
 
     def get_fields(self):
-        fields = trac.server.ticket.getTicketFields()
+        if self.fields:
+            return
+        try:
+            fields = trac.server.ticket.getTicketFields()
+        except Exception as e:
+            print_error(e)
+            return
         self.options = {}
-        self.fields = []
+        self.fields = fields
         for f in fields:
-            self.fields.append(f)
             if 'options' in f:
                 self.options[f['name']] = f['options']
         self.max_label_width = max([len(f['label']) for f in self.fields])
@@ -581,7 +627,7 @@ class Ticket(object):
                                                'Resolution', 'Status'):
                     continue
                 name = 'TT{0}{1}'.format(s.title(), mname)
-                mc = 'python trac.{0}_ticket("{1}", <f-args>)'.format(s, fname)
+                mc = 'python trac.{0}_ticket("{1}", <q-args>)'.format(s, fname)
                 command = 'com! -nargs=? {0} {1} {2}'.format(comp, name, mc)
                 vim.command(command)
 
@@ -607,12 +653,17 @@ class Ticket(object):
 
     @property
     def number_tickets(self):
-        total = len(trac.server.ticket.query(self.query_string(True)))
+        try:
+            total = len(trac.server.ticket.query(self.query_string(True)))
+        except Exception as e:
+            print_error(e)
+            self.total_pages = 0
+            return 0
         max_regex = re.compile('max=(\d*)')
         res = max_regex.search(self.query_string())
         if res:
             tickets_per_page = res.groups()[0]
-            if tickets_per_page == 0:
+            if tickets_per_page == '0':
                 tickets_per_page = total
         else:
             tickets_per_page = 100
@@ -624,8 +675,11 @@ class Ticket(object):
 
     def get_all(self):
         multicall = xmlrpclib.MultiCall(trac.server)
-        for ticket in trac.server.ticket.query(self.query_string()):
-            multicall.ticket.get(ticket)
+        try:
+            for ticket in trac.server.ticket.query(self.query_string()):
+                multicall.ticket.get(ticket)
+        except Exception as e:
+            return ' || Error: {0}'.format(e)
         tickets = multicall()
         self.tickets = tickets
 
@@ -636,11 +690,15 @@ class Ticket(object):
             columns.remove('resolution')
 
         ticket_list = [' || '.join([c.title() for c in columns])]
-        for ticket in tickets:
-            str_ticket = [str(ticket[0]), truncate_words(ticket[3]['summary'])]
-            for f in columns[2:]:
-                str_ticket.append(ticket[3].get(f, ''))
-            ticket_list.append(' || '.join(str_ticket))
+        try:
+            for ticket in tickets:
+                str_ticket = [str(ticket[0]),
+                              truncate_words(ticket[3]['summary'])]
+                for f in columns[2:]:
+                    str_ticket.append(ticket[3].get(f, ''))
+                ticket_list.append(' || '.join(str_ticket))
+        except Exception as e:
+            return ' || Error: {0}'.format(e)
 
         ticket_list.append('')
         for k, v in self.sorter.iteritems():
@@ -662,12 +720,17 @@ class Ticket(object):
         try:
             tid = int(tid)
             ticket = trac.server.ticket.get(tid)
-            self.current = {'id': tid, '_ts': ticket[3].get('_ts')}
+            self.current = {
+                'id': tid,
+                '_ts': ticket[3].get('_ts'),
+                'summary': ticket[3]['summary'],
+                'description': ticket[3]['description'],
+            }
             ticket_changelog = trac.server.ticket.changeLog(tid)
             self.current_component = ticket[3].get("component")
             actions = self.get_actions()
-            self.list_attachments()
-        except TypeError:
+            self.attachments = self.list_attachments()
+        except (TypeError, ValueError):
             return 'Please select a ticket'
         except Exception as e:
             return 'An error occured:\n\t{0}'.format(e)
@@ -680,7 +743,7 @@ class Ticket(object):
                 v = get_time(ticket[3][f['name']], True)
             else:
                 v = ticket[3].get(f['name'], '')
-            str_ticket.append(' {0:>{2}}: {1}'.format(f['label'], v,
+            str_ticket.append(u' * {0:>{2}}: {1}'.format(f['label'], v,
                                                      self.max_label_width))
 
         str_ticket.append("")
@@ -699,21 +762,21 @@ class Ticket(object):
             new_submission = [my_time, change[1]]
             if submission != new_submission:
                 str_ticket.append("")
-                str_ticket.append('== {0} ({1}) =='.format(my_time, change[1]))
+                str_ticket.append(u'== {0} ({1}) =='.format(my_time,
+                                                            change[1]))
                 str_ticket.append("")
                 submission = new_submission
             if change[2] == 'comment':
                 str_ticket.append(change[4])
             elif change[2] in ('summary', 'description'):
-                str_ticket.append("''{0}'' changed".format(change[2]))
+                str_ticket.append("{0} changed".format(change[2]))
             else:
                 label = self.get_label(change[2])
                 if change[3]:
-                    str_ticket.append(" * '''{0}''': ''{1}'' > ''{2}''".format(
-                        label, change[3], change[4]))
+                    str_ticket.append(u" * {0}: {1} > {2}".format(label,
+                        change[3], change[4]))
                 else:
-                    str_ticket.append(" * '''{0}''': ''{1}''".format(label,
-                        change[4]))
+                    str_ticket.append(u" * {0}: {1}".format(label, change[4]))
 
         str_ticket.append("")
         str_ticket.append('== Action ==')
@@ -735,23 +798,46 @@ class Ticket(object):
         return None
 
     def create(self, description, summary, attributes={}):
-        return trac.server.ticket.create(summary, description, attributes)
+        try:
+            return trac.server.ticket.create(summary, description, attributes)
+        except Exception as e:
+            print_error(e)
+            return None
 
     def get_attachment(self, file):
-        buffer = trac.server.ticket.getAttachment(self.current.get('id'), file)
-        save_buffer(buffer.data, file)
+        try:
+            buffer = trac.server.ticket.getAttachment(self.current.get('id'),
+                                                      file)
+            save_buffer(buffer.data, file)
+            return True
+        except Exception as e:
+            print_error(e)
+            return False
 
     def add_attachment(self, file, comment=''):
         file_name = os.path.basename(file)
-        trac.server.ticket.putAttachment(self.current.get('id'), file_name,
+        try:
+            trac.server.ticket.putAttachment(self.current.get('id'), file_name,
                 comment, xmlrpclib.Binary(open(file).read()))
+            return True
+        except Exception as e:
+            print_error(e)
+            return False
 
     def list_attachments(self):
-        a_attach = trac.server.ticket.listAttachments(self.current.get('id'))
-        self.attachments = [a[0] for a in a_attach]
+        try:
+            return [a[0] for a in
+                    trac.server.ticket.listAttachments(self.current.get('id'))]
+        except Exception as e:
+            print_error(e)
+            return []
 
     def get_actions(self):
-        actions = trac.server.ticket.getActions(self.current.get('id'))
+        try:
+            actions = trac.server.ticket.getActions(self.current.get('id'))
+        except Exception as e:
+            print_error(e)
+            return []
         self.actions = []
         for action in actions:
             if action[3]:
@@ -805,7 +891,10 @@ class Ticket(object):
 
 
 def search(search_pattern):
-    a_search = trac.server.search.performSearch(search_pattern)
+    try:
+        a_search = trac.server.search.performSearch(search_pattern)
+    except Exception as e:
+        return "Error: {0}".format(e)
     result = [
         "Results for {0}".format(search_pattern),
         "(Hit <enter> on a line containing :>>)",
@@ -823,7 +912,7 @@ def search(search_pattern):
     return '\n'.join(result)
 
 
-def timeline(server):
+def timeline(server, on=None, author=None):
     try:
         import feedparser
         from time import strftime
@@ -831,7 +920,11 @@ def timeline(server):
         vim.command('echoerr "Please install feedparser.py!"')
         return
 
-    query = 'ticket=on&changeset=on&wiki=on&max=50&daysback=90&format=rss'
+    query = 'max={0}&format=rss'.format(vim.eval('g:tracTimelineMax'))
+    if on in ('wiki', 'ticket', 'changeset'):
+        query = '{0}=on&{1}'.format(on, query)
+    if author:
+        query = 'authors={0}&{1}'.format(author, query)
     feed = '{scheme}://{server}/timeline?{q}'.format(q=query, **server)
     d = feedparser.parse(feed)
     str_feed = ["Hit <enter> on a line containing :>>", ""]
@@ -839,16 +932,18 @@ def timeline(server):
         str_feed.append(strftime("%Y-%m-%d %H:%M:%S", item.updated_parsed))
 
         if 'ticket' in item.category:
-            m = re.match(r"^Ticket #(\d+)", item.title)
-            str_feed.append("Ticket:>> {0}".format(m.group(1)))
+            m = re.match(r'^Ticket #(\d+)', item.title)
+            str_feed.append('Ticket:>> {0}'.format(m.group(1)))
         if 'wiki' in item.category:
-            str_feed.append("Wiki:>> {0}".format(item.title.split(' ', 1)[0]))
+            str_feed.append('Wiki:>> {0}'.format(item.title.split(' ', 1)[0]))
         if 'changeset' in item.category:
-            m = re.match(r"^Changeset \[([\w]+)\]:", item.title)
-            str_feed.append("Changeset:>> {0}".format(m.group(1)))
+            m = re.match(r'^Changeset \[(\w+)\]:', item.title)
+            str_feed.append('Changeset:>> {0}'.format(m.group(1)))
 
         str_feed.append(item.title)
-        str_feed.append("Link: {0}".format(item.link))
+        if item.get('author'):
+            str_feed.append(u'Author: {0}'.format(item.author))
+        str_feed.append(u'Link: {0}'.format(item.link))
         str_feed.append('')
 
     return '\n'.join(str_feed)
@@ -867,7 +962,6 @@ class Trac(object):
         self.search_window = SearchWindow(prefix='Search')
         self.changeset_window = ChangesetWindow(prefix='Changeset')
 
-        self.server_list = vim.eval('g:tracServerList')
         self.default_comment = vim.eval('g:tracDefaultComment')
         self.set_server(vim.eval('g:tracDefaultServer'))
         self.history = {'wiki': [], 'ticket': []}
@@ -881,9 +975,10 @@ class Trac(object):
         return self.uiticket.windows['edit'].content
 
     def set_server(self, server):
+        server_list = vim.eval('g:tracServerList')
         if not server:
-            server = self.server_list.keys()[0]
-        url = self.server_list[server]
+            server = server_list.keys()[0]
+        url = server_list[server]
         self.server_name = server
         self.server_url = {
             'scheme': url.get('scheme', 'http'),
@@ -904,6 +999,7 @@ class Trac(object):
             self.server = xmlrpclib.ServerProxy(url, transport=transport)
         else:
             self.server = xmlrpclib.ServerProxy(url)
+        self.server.__transport.user_agent = "Vitra 1.0 (Trac client for Vim)"
 
         self.wiki.initialise()
         self.ticket.initialise()
@@ -915,7 +1011,7 @@ class Trac(object):
             self.history[type_].append(page)
 
     def traverse_history(self, type_, current, direction):
-        if not direction or not self.history.get(type_):
+        if not all([current, direction, self.history.get(type_)]):
             return current
         loc = self.history[type_].index(current)
         try:
@@ -943,21 +1039,15 @@ class Trac(object):
         self.uiwiki.focus('wiki')
         self.set_history('wiki', page)
 
-    def ticket_view(self, tid=False, direction=None, listing=False):
-        if listing:
-            m = re.search(r'^\s*(\d+)', vim.current.line)
-            try:
-                tid = int(m.group(0))
-            except:
-                vim.command("echoerr 'no ticket selected'")
-                return
+    def ticket_view(self, tid=None, direction=None):
+        try:
+            tid = int(tid) if tid else self.ticket.current.get('id')
+            tid = self.traverse_history('ticket', tid, direction)
+        except (ValueError, TypeError):
+            print 'Please provide a valid ticket id'
+            return
 
-        tid = int(tid) if tid else self.ticket.current.get('id')
-        tid = self.traverse_history('ticket', tid, direction)
-
-        if not self.ticket.fields:
-            self.ticket.get_fields()
-
+        self.ticket.get_fields()
         contents = {
             'ticket': self.ticket.get(tid),
             'edit': '',
@@ -972,20 +1062,33 @@ class Trac(object):
         self.uiticket.update(contents, titles)
         if tid:
             self.uiticket.focus('ticket')
+            if vim.eval('g:tracTicketFormat') == '1':
+                try:
+                    self.uiticket.windows['ticket'].load(contents['ticket'])
+                except Exception as e:
+                    print 'Could not format the content'
+                    print_error(e)
         self.set_history('ticket', tid)
 
     def search_view(self, keyword):
         self.search_window.write(search(keyword))
         self.search_window.set_name(keyword.replace(' ', '_'))
 
-    def timeline_view(self):
-        self.timeline_window.write(timeline(self.server_url))
+    def timeline_view(self, on=None, author=None):
+        self.timeline_window.write(timeline(self.server_url, on, author))
         self.timeline_window.set_name(self.server_name)
 
     def server_view(self):
-        servers = "\n".join(['{0}: {1}'.format(key, val['server']) for key, val
-                             in self.server_list.iteritems()])
+        server_list = vim.eval('g:tracServerList')
+        default = '{0}: '.format(vim.eval('g:tracDefaultServer'))
+        current = '{0}: '.format(self.server_name)
+        servers = '\n'.join(['{0}: {1}'.format(key, val['server']) for key, val
+                             in server_list.iteritems()])
+        if len(default) > 2:
+            servers = servers.replace(default, '*{0}'.format(default))
+        servers = servers.replace(current, '!{0}'.format(current))
         self.server_window.write(servers)
+        print 'Trac server is set to', self.server_name
 
     def changeset_view(self, changeset):
         cs_url = '{scheme}://{server}/changeset/{changeset}'.format(
@@ -1032,7 +1135,8 @@ class Trac(object):
 
         attribs = {'type': type_} if type_ else {}
         tid = self.ticket.create(description, summary, attribs)
-        self.ticket_view(tid)
+        if tid is not None:
+            self.ticket_view(tid)
 
     def update_ticket(self, option, value=None):
         text = self.ticket_content
@@ -1060,26 +1164,28 @@ class Trac(object):
         line = vim.current.line
         if 'Ticket:>>' in line:
             vim.command('tabnew')
-            self.ticket_view(line.replace('Ticket:>> ', ''))
+            self.ticket_view(line.replace('Ticket:>> ', '').strip())
         elif 'Wiki:>>' in line:
             vim.command('tabnew')
-            self.wiki_view(line.replace('Wiki:>> ', ''))
+            self.wiki_view(line.replace('Wiki:>> ', '').strip())
         elif 'Changeset:>>' in line:
-            self.changeset_view(line.replace('Changeset:>> ', ''))
+            self.changeset_view(line.replace('Changeset:>> ', '').strip())
+        elif line.startswith('Link: '):
+            webbrowser.open(line.replace('Link: ', ''))
 
     def add_attachment(self, file):
         bname = os.path.basename(vim.current.buffer.name)
         if bname.startswith('Wiki: '):
             print "Adding attachment to wiki", self.wiki.current.get('name')
-            self.wiki.add_attachment(file)
-            self.wiki_view()
-            print 'Done.'
+            if self.wiki.add_attachment(file):
+                self.wiki_view()
+                print 'Done.'
         elif bname.startswith('Ticket: '):
             print "Adding attachment to ticket", self.ticket.current.get('id')
             comment = self.ticket_content
-            self.ticket.add_attachment(file, comment)
-            self.ticket_view()
-            print 'Done.'
+            if self.ticket.add_attachment(file, comment):
+                self.ticket_view()
+                print 'Done.'
         else:
             print "You need an active ticket or wiki open!"
 
@@ -1088,15 +1194,18 @@ class Trac(object):
         if bname.startswith('Wiki: '):
             print "Retrieving attachment from wiki",
             print self.wiki.current.get('name')
-            self.wiki.get_attachment(file)
-            print 'Done.'
+            if self.wiki.get_attachment(file):
+                print 'Done.'
         elif bname.startswith('Ticket: '):
             print "Retrieving attachment from ticket",
             print self.ticket.current.get('id')
-            self.ticket.get_attachment(file)
-            print 'Done.'
+            if self.ticket.get_attachment(file):
+                print 'Done.'
         else:
             print "You need an active ticket or wiki open!"
+
+    def load_current(self, text_for):
+        self.uiticket.windows['edit'].write(self.ticket.current.get(text_for))
 
     def preview(self):
         bname = os.path.basename(vim.current.buffer.name)

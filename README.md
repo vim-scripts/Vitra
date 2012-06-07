@@ -18,6 +18,10 @@ Wiki UI
 
 ![django wiki][djwiki]
 
+Other windows
+
+![localdj windows][otherwins]
+
 # Requirements
 
 `Vitra` requires Vim 7.3+ to be compiled with python 2.6+. [`Align`][Align] and
@@ -70,10 +74,10 @@ example of django trac server:
         \ 'scheme': 'https',
         \ 'auth': 'USERNAME:PASSWORD',
         \ 'server': 'code.djangoproject.com',
-        \ 'rpc_auth': '/login/xmlrpc'
+        \ 'rpc_path': '/login/xmlrpc'
         \ }
 
-By default, _scheme_ and *rpc_auth* have values _http_ and _/login/rpc_.
+By default, _scheme_ and *rpc_path* have values _http_ and _/login/rpc_.
 
 If you define more than one trac server, you can also choose a default server
 that will be selected when a vim session starts. To define the default server
@@ -207,6 +211,9 @@ The following options are available for `Vitra`:
  * _g:tracTicketStyle_: 'full'
    * Unless set to 'full', the ticket listing window will appear in the ticket
      UI. Also this will hide all other buffers other than the ticket UI.
+ * _g:tracTicketFormat_: 1
+   * If set to 1, show formatted text in ticket detail window. Otherwise, show
+     the wiki markup content.
  * _g:tracWikiStyle_: 'full'
    * If set to 'full', the wiki UI will hide all other buffers.
  * _g:tracWikiPreview_: 1
@@ -255,4 +262,5 @@ SOFTWARE.
 [Pathogen]: http://github.com/tpope/vim-pathogen "Vim runtime manager"
 [djtkt]: http://dl.dropbox.com/u/125015/vitradjangotickets.png "Django tickets"
 [djwiki]: http://dl.dropbox.com/u/125015/vitradjangowiki.png "Django wiki"
+[otherwins]: http://dl.dropbox.com/u/125015/vitraothers.png "Other windows"
 [vimtrac]: http://www.vim.org/scripts/script.php?script_id=2147
