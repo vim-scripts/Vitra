@@ -1,6 +1,6 @@
 This is a mirror of http://www.vim.org/scripts/script.php?script_id=4092
 
-Vitra (Trac client UI for ViM)
+Vitra (Trac client UI for ViM) http://trac.edgewall.org
 
 Vitra is a Trac client UI for the wonderful universal editor Vim. It talks to a trac server via XML-RPC. It provides a fancy UI for both wiki and tickets. A paginated list of tickets window, full ticket detail window along with attachment window makes a great UI for ticket manipulation. The wiki UI combines the list of wiki pages, edit window with the content of the wiki and a preview window. It also has timeline, search and changeset windows.
 

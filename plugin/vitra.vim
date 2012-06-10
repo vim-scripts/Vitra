@@ -49,7 +49,7 @@ com! -nargs=? -complete=customlist,ComTracServers TracServer  python trac.set_se
 com! -nargs=? -complete=customlist,ComWiki TWOpen python trac.wiki_view(<q-args>)
 com! -nargs=0 TWClose python trac.uiwiki.destroy()
 com! -nargs=* TWSave python trac.wiki.save(<q-args>)
-com! -nargs=0 TWInfo python print trac.wiki.get_page_info()
+com! -nargs=0 TWInfo python print trac.wiki.current
 
 com! -nargs=? -complete=customlist,ComTicket TTOpen python trac.ticket_view(<q-args>)
 com! -nargs=0 TTClose python trac.uiticket.destroy()
@@ -74,7 +74,6 @@ com! -nargs=0 TTLastPage python trac.ticket.page = trac.ticket.total_pages; trac
 com! -nargs=+ -complete=customlist,ComAction TTAction python trac.act_ticket(<q-args>)
 
 com! -nargs=* -complete=customlist,ComTracType TTimeline python trac.timeline_view(<f-args>)
-com! -nargs=? TTimelineAuthor python trac.timeline_view(author=<q-args>)
 com! -nargs=+ TSearch python trac.search_view(<q-args>)
 com! -nargs=1 TChangeset python trac.changeset_view(<q-args>)
 com! -nargs=0 TServer python trac.server_view()
